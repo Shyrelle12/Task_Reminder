@@ -2,19 +2,19 @@ import spacy
 import dateparser
 from flask import Flask, render_template, request, redirect, url_for
 from mysql.connector import connect
-import datetime
+from datetime import datetime, timedelta
 import threading
 import time
 from plyer import notification
 import pyttsx3
 import re
-from datetime import datetime, timedelta
 
 # Initialize spaCy NLP model
 nlp = spacy.load("en_core_web_sm")
 
 app = Flask(__name__)
 
+# Database connection
 def db_connect():
     return connect(
         host="127.0.0.1",
@@ -28,12 +28,13 @@ def send_notification(message):
     try:
         engine = pyttsx3.init()
         voices = engine.getProperty('voices')
-        engine.setProperty('voice', voices[1].id) #Set to female voice
+        engine.setProperty('voice', voices[1].id)  # Set to female voice
         engine.setProperty('rate', 150)
         engine.say(message)
         engine.runAndWait()
 
         notification.notify(
+            title="Task Reminder",
             message=message,
             timeout=10
         )
@@ -42,14 +43,13 @@ def send_notification(message):
 
 # Function to parse date and time from natural language
 def parse_date_time(text):
-    # Use dateparser to parse the date and time from text
     parsed_date = dateparser.parse(text)
     return parsed_date
 
 # Background thread to check for reminders
 def check_reminders():
     while True:
-        current_time = datetime.datetime.now()
+        current_time = datetime.now()  # Use datetime.now() to get the current time
         connection = db_connect()
         cursor = connection.cursor(dictionary=True)
 
@@ -60,7 +60,7 @@ def check_reminders():
             task_time = task['due_time']
 
             if task_time and isinstance(task_time, str):
-                task_time = datetime.datetime.strptime(task_time, '%Y-%m-%d %H:%M:%S')
+                task_time = datetime.strptime(task_time, '%Y-%m-%d %H:%M:%S')
 
             if task_time and (task_time - current_time).total_seconds() <= 300 and not task['pre_reminder_sent']:
                 send_notification(f"Reminder: {task['description']} is due soon!")
@@ -77,7 +77,8 @@ def check_reminders():
         cursor.close()
         connection.close()
         time.sleep(60)
-# Start background thread
+
+# Start background thread for reminders
 thread = threading.Thread(target=check_reminders, daemon=True)
 thread.start()
 
@@ -85,33 +86,30 @@ thread.start()
 def index():
     connection = db_connect()
     cursor = connection.cursor(dictionary=True)
-    # Order tasks by completion status (non-completed tasks first)
+    # Fetch all tasks ordered by completion status and due time
     cursor.execute("SELECT * FROM task ORDER BY completed ASC, due_time ASC")
     tasks = cursor.fetchall()
-
     cursor.close()
     connection.close()
 
     return render_template('index.html', tasks=tasks)
 
-
 @app.route('/add_task', methods=['POST'])
 def add_task():
     task_details = request.form['task_details']
-    # Regular expression to capture the description and the time/date part
-    # Example inputs: "Drink water at 11 AM tomorrow", "Meeting at 11 AM 14/12/2024"
+    # Extract task description and due time from input
     match = re.match(r"(.*) at (.*)", task_details)
 
     if not match:
         return "Invalid input format. Please use 'task description at time/date'.", 400
-    description = match.group(1).strip()  # Task description
-    time_str = match.group(2).strip()     # Time and/or date part
-    # Parse the date and time using dateparser
-    due_time = dateparser.parse(time_str)
-    # If no valid due time is parsed, return an error
+
+    description = match.group(1).strip()
+    time_str = match.group(2).strip()
+
+    due_time = parse_date_time(time_str)
     if not due_time:
-        return "Invalid time format. Please use a valid format like '11 AM tomorrow' or '14/12/2024 at 11 AM'.", 400
-    # Ensure that the due time is set to the correct date and time
+        return "Invalid time format. Please use '11 AM tomorrow' or '14/12/2024 at 11 AM'.", 400
+
     now = datetime.now()
 
     if "tomorrow" in time_str.lower():
@@ -121,7 +119,6 @@ def add_task():
     elif due_time.date() < now.date():
         due_time = due_time.replace(year=now.year, month=now.month, day=now.day) + timedelta(days=1)
 
-    # Save to the database
     connection = db_connect()
     cursor = connection.cursor()
     cursor.execute(
