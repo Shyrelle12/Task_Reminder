@@ -49,7 +49,7 @@ def parse_date_time(text):
 # Background thread to check for reminders
 def check_reminders():
     while True:
-        current_time = datetime.now()  # Use datetime.now() to get the current time
+        current_time = datetime.now() 
         connection = db_connect()
         cursor = connection.cursor(dictionary=True)
 
